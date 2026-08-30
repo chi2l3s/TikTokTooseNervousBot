@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Local Storage & Temp Directories
+temp/
+temp/*
+!temp/.gitkeep
+
+# Media & User Assets
+music/*
+!music/.gitkeep
+fonts/*
+!fonts/.gitkeep
+
+# Model weights & Caches
+*.pt
+*.onnx
+*.bin
+yolov8*.pt
+.cache/
+huggingface/
+models--*
+
+# IDE & OS Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log

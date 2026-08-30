@@ -1,0 +1,13 @@
+aiogram>=3.4.0
+openai>=1.20.0
+faster-whisper>=1.0.0
+ultralytics>=8.1.0
+opencv-python-headless>=4.9.0.80
+pysubs2>=1.7.0
+yt-dlp>=2024.3.10
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.1
+aiofiles>=23.2.1
+torch>=2.2.0
+torchvision>=0.17.0
+numpy>=1.26.0
