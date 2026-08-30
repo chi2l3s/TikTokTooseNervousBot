@@ -31,6 +31,12 @@ class VideoProcessor:
                 pass
         return default_font
 
+    def _to_safe_rel_path(self, path: Path) -> str:
+        try:
+            return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except Exception:
+            return path.as_posix()
+
     def _compress_to_telegram_limit(self, input_file: Path, duration: float) -> Path:
         size_mb = input_file.stat().st_size / (1024 * 1024)
         if size_mb <= 48.0:
@@ -209,19 +215,18 @@ class VideoProcessor:
             self.cropper.crop_video_dynamic(str(raw_cut_path), str(cropped_video_path))
             has_subs = SubtitleGenerator.generate(all_words, start, end, subtitles_path)
 
-            fonts_dir_safe = config.FONTS_DIR.resolve().as_posix().replace(":", "\\:")
             video_filters = []
             if has_subs:
-                safe_sub_path = subtitles_path.resolve().as_posix().replace(":", "\\:")
-                video_filters.append(f"ass='{safe_sub_path}':fontsdir='{fonts_dir_safe}'")
+                safe_sub_path = self._to_safe_rel_path(subtitles_path)
+                video_filters.append(f"ass='{safe_sub_path}'")
 
             watermark_text = settings.get("watermark_text")
             if watermark_text:
                 font_file = self._ensure_default_font()
-                font_file_safe = font_file.resolve().as_posix().replace(":", "\\:")
+                font_rel_path = self._to_safe_rel_path(font_file)
                 escaped_wm = watermark_text.replace(":", "\\:").replace("'", "")
                 
-                font_arg = f":fontfile='{font_file_safe}'" if font_file.exists() else ""
+                font_arg = f":fontfile='{font_rel_path}'" if font_file.exists() else ""
                 video_filters.append(
                     f"drawtext=text='{escaped_wm}'{font_arg}:fontcolor=white@0.85:fontsize=52:x=(w-tw)/2:y=140:shadowcolor=black@0.9:shadowx=4:shadowy=4:borderw=3:bordercolor=black@0.7"
                 )
@@ -282,7 +287,10 @@ class VideoProcessor:
                     str(master_rendered_path)
                 ]
 
-            subprocess.run(cmd_final, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            proc = subprocess.run(cmd_final, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0:
+                logger.error(f"FFmpeg ошибка:\n{proc.stderr}")
+                raise RuntimeError(f"FFmpeg render failed: {proc.stderr}")
 
             banner_mode = settings.get("banner_mode", "none")
             banner_source = settings.get("banner_source_path")
