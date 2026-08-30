@@ -25,11 +25,11 @@ function Ask-Input {
     while ($true) {
         if ($Default) {
             Write-Host "  ? " -ForegroundColor Yellow -NoNewline
-            Write-Host "$Question " -ForegroundColor White -NoNewline
+            Write-Host "${Question} " -ForegroundColor White -NoNewline
             Write-Host "[$Default]: " -ForegroundColor DarkGray -NoNewline
         } else {
             Write-Host "  ? " -ForegroundColor Yellow -NoNewline
-            Write-Host "$Question: " -ForegroundColor White -NoNewline
+            Write-Host "${Question}: " -ForegroundColor White -NoNewline
         }
 
         if ($IsSecret) {
@@ -70,10 +70,10 @@ if (-not (Test-Path "bot.py")) {
     }
 
     if (-not $cloned -or (-not (Test-Path "bot.py"))) {
-        Write-Host "  [*] Git не найден, загрузка ZIP-архива..." -ForegroundColor Gray
+        Write-Host "  [*] Скачивание ZIP-архива с GitHub..." -ForegroundColor Gray
         $zipUrl = "https://github.com/$RepoOwner/$RepoName/archive/refs/heads/$RepoBranch.zip"
-        $zipFile = "$PWD\repo.zip"
-        $tempExtract = "$PWD\temp_extract"
+        $zipFile = Join-Path $PWD "repo.zip"
+        $tempExtract = Join-Path $PWD "temp_extract"
 
         Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile
         Expand-Archive -Path $zipFile -DestinationPath $tempExtract -Force
@@ -182,7 +182,8 @@ HTTP_PROXY=$httpProxy
 MAX_CLIPS=$maxClips
 "@
 
-[System.IO.File]::WriteAllText("$PWD\.env", $envContent, [System.Text.Encoding]::UTF8)
+$envPath = Join-Path $PWD ".env"
+[System.IO.File]::WriteAllText($envPath, $envContent, [System.Text.Encoding]::UTF8)
 Write-Host "  [✓] Файл конфигурации .env успешно создан!" -ForegroundColor Green
 
 # Виртуальное окружение
@@ -204,7 +205,8 @@ call .venv\Scripts\activate.bat
 python bot.py
 pause
 "@
-[System.IO.File]::WriteAllText("$PWD\start.bat", $launcherContent, [System.Text.Encoding]::UTF8)
+$launcherPath = Join-Path $PWD "start.bat"
+[System.IO.File]::WriteAllText($launcherPath, $launcherContent, [System.Text.Encoding]::UTF8)
 
 Write-Host ""
 Write-Host "  ╔═══════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
