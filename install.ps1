@@ -5,6 +5,15 @@ $RepoOwner = "chi2l3s"
 $RepoName = "TikTokTooseNervousBot"
 $RepoBranch = "main"
 
+# Защита от запуска в system32
+if ($PWD.Path -like "*\system32*" -or $PWD.Path -like "*\Windows*") {
+    $SafeDir = "C:\TikTokTooseNervousBot"
+    if (-not (Test-Path $SafeDir)) {
+        New-Item -ItemType Directory -Path $SafeDir -Force | Out-Null
+    }
+    Set-Location -Path $SafeDir
+}
+
 function Print-Header {
     Clear-Host
     Write-Host ""
@@ -12,6 +21,8 @@ function Print-Header {
     Write-Host "  ║                🎬 AI MOVIE SHORTS BOT INSTALLER                   ║" -ForegroundColor Cyan
     Write-Host "  ║         Автоматическая установка и интерактивная настройка        ║" -ForegroundColor Cyan
     Write-Host "  ╚═══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  [i] Папка установки: $PWD" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -23,13 +34,14 @@ function Ask-Input {
         [bool]$IsSecret = $false
     )
     while ($true) {
+        Write-Host "  ? " -ForegroundColor Yellow -NoNewline
+        Write-Host $Question -ForegroundColor White -NoNewline
         if ($Default) {
-            Write-Host "  ? " -ForegroundColor Yellow -NoNewline
-            Write-Host "${Question} " -ForegroundColor White -NoNewline
-            Write-Host "[$Default]: " -ForegroundColor DarkGray -NoNewline
+            Write-Host " [" -ForegroundColor DarkGray -NoNewline
+            Write-Host $Default -ForegroundColor Gray -NoNewline
+            Write-Host "]: " -ForegroundColor DarkGray -NoNewline
         } else {
-            Write-Host "  ? " -ForegroundColor Yellow -NoNewline
-            Write-Host "${Question}: " -ForegroundColor White -NoNewline
+            Write-Host ": " -ForegroundColor DarkGray -NoNewline
         }
 
         if ($IsSecret) {
@@ -84,11 +96,11 @@ if (-not (Test-Path "bot.py")) {
         Remove-Item -Path $tempExtract -Recurse -Force
         Remove-Item -Path $zipFile -Force
     }
-    Write-Host "  [✓] Проект успешно загружен в текущую папку!" -ForegroundColor Green
+    Write-Host "  [✓] Проект успешно загружен!" -ForegroundColor Green
 }
 
 # 2. Проверка Python
-Write-Host "  [*] Проверка зависимостей системы..." -ForegroundColor Gray
+Write-Host "  [*] Проверка Python..." -ForegroundColor Gray
 try {
     $pyVer = & python --version 2>&1
     Write-Host "  [✓] Найден $pyVer" -ForegroundColor Green
@@ -101,6 +113,7 @@ try {
 }
 
 # 3. Проверка FFmpeg
+Write-Host "  [*] Проверка FFmpeg..." -ForegroundColor Gray
 try {
     & ffmpeg -version | Out-Null
     Write-Host "  [✓] Найден FFmpeg" -ForegroundColor Green
@@ -123,7 +136,7 @@ Write-Host ""
 $botToken = Ask-Input -Question "Введите Telegram Bot Token (от @BotFather)" -Required $true
 $openaiKey = Ask-Input -Question "Введите OpenAI / OpenRouter API ключ" -Required $true -IsSecret $true
 $baseUrl = Ask-Input -Question "OpenAI Base URL" -Default "https://api.openai.com/v1"
-$modelName = Ask-Input -Question "Модель LLM (gpt-4o / deepseek-chat / anthropic/...)" -Default "gpt-4o"
+$modelName = Ask-Input -Question "Модель LLM" -Default "gpt-4o"
 
 Write-Host ""
 Write-Host "  Выберите модель Whisper для распознавания речи:" -ForegroundColor Gray
@@ -213,8 +226,8 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║                   УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                    ║" -ForegroundColor Green
 Write-Host "  ╚═══════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Для запуска бота используйте команду:" -ForegroundColor White
-Write-Host "    .\start.bat" -ForegroundColor Yellow
+Write-Host "  Проект установлен в папку: $PWD" -ForegroundColor Cyan
+Write-Host "  Для последующего запуска используйте файл start.bat в этой папке." -ForegroundColor White
 Write-Host ""
 
 $startNow = Ask-Input -Question "Запустить бота прямо сейчас? (y/n)" -Default "y"
