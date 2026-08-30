@@ -1,8 +1,8 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-$RepoOwner = "ВАШ_АККАУНТ"
-$RepoName = "ВАШ_РЕПОЗИТОРИЙ"
+$RepoOwner = "chi2l3s"
+$RepoName = "TikTokTooseNervousBot"
 $RepoBranch = "main"
 
 function Print-Header {
