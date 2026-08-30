@@ -1,6 +1,10 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+$RepoOwner = "ВАШ_АККАУНТ"
+$RepoName = "ВАШ_РЕПОЗИТОРИЙ"
+$RepoBranch = "main"
+
 function Print-Header {
     Clear-Host
     Write-Host ""
@@ -50,7 +54,40 @@ function Ask-Input {
 
 Print-Header
 
-# 1. Проверка Python
+# 1. Проверка и клонирование репозитория
+if (-not (Test-Path "bot.py")) {
+    Write-Host "  [*] Файлы проекта не обнаружены в текущей папке." -ForegroundColor Yellow
+    Write-Host "  [*] Загрузка проекта из GitHub ($RepoOwner/$RepoName)..." -ForegroundColor Gray
+    
+    $cloned = $false
+    try {
+        & git --version | Out-Null
+        Write-Host "  [*] Клонирование через Git..." -ForegroundColor Gray
+        & git clone "https://github.com/$RepoOwner/$RepoName.git" . --quiet
+        $cloned = $true
+    } catch {
+        $cloned = $false
+    }
+
+    if (-not $cloned -or (-not (Test-Path "bot.py"))) {
+        Write-Host "  [*] Git не найден, загрузка ZIP-архива..." -ForegroundColor Gray
+        $zipUrl = "https://github.com/$RepoOwner/$RepoName/archive/refs/heads/$RepoBranch.zip"
+        $zipFile = "$PWD\repo.zip"
+        $tempExtract = "$PWD\temp_extract"
+
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile
+        Expand-Archive -Path $zipFile -DestinationPath $tempExtract -Force
+        
+        $innerFolder = Get-ChildItem -Path $tempExtract | Select-Object -First 1
+        Get-ChildItem -Path $innerFolder.FullName | Move-Item -Destination $PWD -Force
+        
+        Remove-Item -Path $tempExtract -Recurse -Force
+        Remove-Item -Path $zipFile -Force
+    }
+    Write-Host "  [✓] Проект успешно загружен в текущую папку!" -ForegroundColor Green
+}
+
+# 2. Проверка Python
 Write-Host "  [*] Проверка зависимостей системы..." -ForegroundColor Gray
 try {
     $pyVer = & python --version 2>&1
@@ -59,11 +96,11 @@ try {
     Write-Host "  [✗] Python не найден!" -ForegroundColor Red
     Write-Host "      Устанавливаю Python через winget..." -ForegroundColor Yellow
     winget install Python.Python.3.11 --accept-source-agreements --accept-package-agreements
-    Write-Host "  [!] Пожалуйста, перезапустите терминал после завершения работы winget." -ForegroundColor Red
+    Write-Host "  [!] Пожалуйста, перезапустите терминал после установки Python." -ForegroundColor Red
     Exit
 }
 
-# 2. Проверка FFmpeg
+# 3. Проверка FFmpeg
 try {
     & ffmpeg -version | Out-Null
     Write-Host "  [✓] Найден FFmpeg" -ForegroundColor Green
