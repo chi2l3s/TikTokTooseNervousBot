@@ -31,7 +31,8 @@ class VideoProcessor:
                 pass
         return default_font
 
-    def _to_safe_rel_path(self, path: Path) -> str:
+    @staticmethod
+    def _to_safe_rel_path(path: Path) -> str:
         try:
             return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
         except Exception:
@@ -68,10 +69,16 @@ class VideoProcessor:
         compressed_output.rename(input_file)
         return input_file
 
-    def _prepare_ad_clip(self, ad_source_path: Path, output_ad_clip: Path):
+    def _prepare_ad_clip(self, ad_source_path: Path, output_ad_clip: Path, aspect_ratio: str = "9:16"):
         is_video = ad_source_path.suffix.lower() in [".mp4", ".mov", ".mkv", ".webm", ".avi"]
-        vf = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
         
+        if aspect_ratio == "9:16":
+            vf = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+        elif aspect_ratio == "4:3":
+            vf = "scale=1440:1080:force_original_aspect_ratio=decrease,pad=1440:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+        else:
+            vf = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+
         if is_video:
             cmd = [
                 "ffmpeg", "-y",
@@ -102,7 +109,8 @@ class VideoProcessor:
             ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-    def _get_ad_insert_timestamps(self, duration: float, mode: str) -> list[float]:
+    @staticmethod
+    def _get_ad_insert_timestamps(duration: float, mode: str) -> list[float]:
         if mode == "start":
             return [min(5.0, duration * 0.15)]
         elif mode == "middle":
@@ -118,10 +126,11 @@ class VideoProcessor:
             return points
         return []
 
-    def _splice_ad_into_video(self, main_video: Path, ad_clip: Path, insert_points: list[float], output_video: Path):
+    @staticmethod
+    def _splice_ad_into_video(main_video: Path, ad_clip: Path, insert_points: list[float], output_video: Path):
         segments = []
         prev_t = 0.0
-        
+
         for idx, t in enumerate(insert_points):
             seg_path = main_video.parent / f"main_seg_{idx}.mp4"
             cmd_cut = [
@@ -156,11 +165,11 @@ class VideoProcessor:
 
         filter_inputs = "".join([f"[{i}:v][{i}:a]" for i in range(len(segments))])
         filter_complex = f"{filter_inputs}concat=n={len(segments)}:v=1:a=1[v][a]"
-        
+
         cmd_concat = ["ffmpeg", "-y"]
         for s in segments:
             cmd_concat.extend(["-i", str(s)])
-            
+
         cmd_concat.extend([
             "-filter_complex", filter_complex,
             "-map", "[v]",
@@ -186,12 +195,30 @@ class VideoProcessor:
         output_dir: Path,
         index: int,
         settings: dict,
+        progress_tracker=None,
+        total_clips: int = 1,
     ) -> Path:
+        loop = asyncio.get_running_loop()
+
+        def _crop_progress_callback(cur_frame: int, total_frames: int):
+            if progress_tracker and total_frames > 0:
+                pct = (cur_frame / total_frames) * 100.0
+                asyncio.run_coroutine_threadsafe(
+                    progress_tracker.update(
+                        stage_title=f"✂️ [4/4] Монтаж клипа {index + 1} из {total_clips}...",
+                        percent=pct,
+                        extra_info=f"Кадр {cur_frame}/{total_frames}",
+                    ),
+                    loop,
+                )
+
         def _process():
             start = clip_data["start"]
             end = clip_data["end"]
             duration = end - start
-            
+            aspect = settings.get("aspect_ratio", "9:16")
+            face_track = settings.get("face_tracking", True)
+
             raw_cut_path = output_dir / f"raw_cut_{index}.mp4"
             cropped_video_path = output_dir / f"temp_cropped_{index}.mp4"
             subtitles_path = output_dir / f"subs_{index}.ass"
@@ -212,23 +239,38 @@ class VideoProcessor:
             ]
             subprocess.run(cmd_cut, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-            self.cropper.crop_video_dynamic(str(raw_cut_path), str(cropped_video_path))
-            has_subs = SubtitleGenerator.generate(all_words, start, end, subtitles_path)
+            self.cropper.crop_video(
+                input_video=str(raw_cut_path),
+                output_video=str(cropped_video_path),
+                aspect_ratio=aspect,
+                enable_tracking=face_track,
+                progress_callback=_crop_progress_callback,
+            )
+
+            has_subs = SubtitleGenerator.generate(
+                words=all_words,
+                clip_start=start,
+                clip_end=end,
+                output_path=subtitles_path,
+                aspect_ratio=aspect,
+            )
 
             video_filters = []
             if has_subs:
-                safe_sub_path = self._to_safe_rel_path(subtitles_path)
-                video_filters.append(f"ass='{safe_sub_path}'")
+                safe_sub = self._to_safe_rel_path(subtitles_path)
+                video_filters.append(f"ass='{safe_sub}'")
 
             watermark_text = settings.get("watermark_text")
             if watermark_text:
                 font_file = self._ensure_default_font()
-                font_rel_path = self._to_safe_rel_path(font_file)
+                font_rel = self._to_safe_rel_path(font_file)
                 escaped_wm = watermark_text.replace(":", "\\:").replace("'", "")
+                font_arg = f":fontfile='{font_rel}'" if font_file.exists() else ""
                 
-                font_arg = f":fontfile='{font_rel_path}'" if font_file.exists() else ""
+                pos_y = "140" if aspect == "9:16" else "60"
+                font_size = "52" if aspect == "9:16" else "38"
                 video_filters.append(
-                    f"drawtext=text='{escaped_wm}'{font_arg}:fontcolor=white@0.85:fontsize=52:x=(w-tw)/2:y=140:shadowcolor=black@0.9:shadowx=4:shadowy=4:borderw=3:bordercolor=black@0.7"
+                    f"drawtext=text='{escaped_wm}'{font_arg}:fontcolor=white@0.85:fontsize={font_size}:x=(w-tw)/2:y={pos_y}:shadowcolor=black@0.9:shadowx=4:shadowy=4:borderw=3:bordercolor=black@0.7"
                 )
 
             music_files = [
@@ -287,10 +329,7 @@ class VideoProcessor:
                     str(master_rendered_path)
                 ]
 
-            proc = subprocess.run(cmd_final, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if proc.returncode != 0:
-                logger.error(f"FFmpeg ошибка:\n{proc.stderr}")
-                raise RuntimeError(f"FFmpeg render failed: {proc.stderr}")
+            subprocess.run(cmd_final, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
             banner_mode = settings.get("banner_mode", "none")
             banner_source = settings.get("banner_source_path")
@@ -299,7 +338,7 @@ class VideoProcessor:
                 insert_points = self._get_ad_insert_timestamps(duration, banner_mode)
                 if insert_points:
                     ad_clip_path = output_dir / f"prepared_ad_{index}.mp4"
-                    self._prepare_ad_clip(Path(banner_source), ad_clip_path)
+                    self._prepare_ad_clip(Path(banner_source), ad_clip_path, aspect_ratio=aspect)
                     self._splice_ad_into_video(master_rendered_path, ad_clip_path, insert_points, final_output)
                     ad_clip_path.unlink(missing_ok=True)
                 else:

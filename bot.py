@@ -5,6 +5,8 @@ import asyncio
 import logging
 import re
 import shutil
+import signal
+import sys
 import uuid
 from pathlib import Path
 from aiogram import Bot, Dispatcher, F
@@ -22,16 +24,17 @@ from aiogram.types import (
 )
 
 from config import config
+from core.logger import setup_logger
+from db.models import UserSettings
+from db.repository import SettingsRepository
+from db.session import engine, init_db
 from services.ai_analyzer import AIAnalyzer
 from services.downloader import VideoDownloader
+from services.progress import ProgressTracker
 from services.transcriber import Transcriber
 from services.video_processor import VideoProcessor
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%H:%M:%S",
-)
+setup_logger(level=logging.INFO)
 logger = logging.getLogger("Bot")
 
 session = AiohttpSession(proxy=config.HTTP_PROXY) if config.HTTP_PROXY else None
@@ -49,30 +52,35 @@ class Form(StatesGroup):
     waiting_watermark = State()
     waiting_banner = State()
 
-user_sessions = {}
+active_tasks: dict[str, dict] = {}
+processing_jobs: set[asyncio.Task] = set()
 
-def get_settings_keyboard(task_id: str, s: dict) -> InlineKeyboardMarkup:
-    mode_text = "⚡ 30-60 сек" if s["mode"] == "short" else "🎬 До 5 минут"
-    music_text = "✅ Вкл" if s["add_music"] else "❌ Выкл"
-    wm_text = f"✅ {s['watermark_text']}" if s["watermark_text"] else "❌ Выкл"
-    desc_text = "✅ Да" if s["gen_description"] else "❌ Нет"
+def get_settings_keyboard(task_id: str, s: UserSettings) -> InlineKeyboardMarkup:
+    mode_text = "⚡ 30-60 сек" if s.mode == "short" else "🎬 До 5 минут"
+    aspect_text = f"📱 {s.aspect_ratio}" if s.aspect_ratio == "9:16" else (f"🖥 {s.aspect_ratio}" if s.aspect_ratio == "16:9" else f"📺 {s.aspect_ratio}")
+    face_text = "✅ Вкл" if s.face_tracking else "❌ Выкл"
+    music_text = "✅ Вкл" if s.add_music else "❌ Выкл"
+    wm_text = f"✅ {s.watermark_text}" if s.watermark_text else "❌ Выкл"
+    desc_text = "✅ Да" if s.gen_description else "❌ Нет"
 
     banner_labels = {
-        "none": "❌ Без интеграции",
+        "none": "❌ Без рекламы",
         "start": "📍 В начале (5s)",
         "middle": "📍 В середине",
         "end": "📍 В конце",
         "every_30": "🔁 Каждые 30 сек",
     }
-    banner_text = banner_labels.get(s["banner_mode"], "❌ Без интеграции")
+    banner_text = banner_labels.get(s.banner_mode, "❌ Без рекламы")
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=f"⏱ Длина: {mode_text}", callback_data=f"toggle_mode:{task_id}")],
+            [InlineKeyboardButton(text=f"📐 Формат: {aspect_text}", callback_data=f"cycle_aspect:{task_id}")],
+            [InlineKeyboardButton(text=f"👤 Трекинг лиц: {face_text}", callback_data=f"toggle_face:{task_id}")],
             [InlineKeyboardButton(text=f"🎵 Музыка: {music_text}", callback_data=f"toggle_music:{task_id}")],
             [InlineKeyboardButton(text=f"🏷 Водяной знак: {wm_text}", callback_data=f"set_wm:{task_id}")],
             [InlineKeyboardButton(text=f"📝 Описание TikTok: {desc_text}", callback_data=f"toggle_desc:{task_id}")],
-            [InlineKeyboardButton(text=f"📺 Реклама (видео/фото): {banner_text}", callback_data=f"cycle_banner:{task_id}")],
+            [InlineKeyboardButton(text=f"📺 Реклама: {banner_text}", callback_data=f"cycle_banner:{task_id}")],
             [InlineKeyboardButton(text="🚀 НАЧАТЬ ГЕНЕРАЦИЮ", callback_data=f"start_render:{task_id}")],
         ]
     )
@@ -81,82 +89,128 @@ def get_settings_keyboard(task_id: str, s: dict) -> InlineKeyboardMarkup:
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "👋 Привет! Отправь мне ссылку на видео (VK Видео, YouTube и др.), "
-        "выбери параметры и получи готовые анимированные клипы для Shorts/Reels.\n\n"
+        "👋 Привет! Отправь мне:\n"
+        "• Ссылку на видео (VK, YouTube и др.)\n"
+        "• <b>Magnet-ссылку</b> на торрент-фильм\n"
+        "• Или отправь <b>.torrent файл</b> документом\n\n"
         f"{VPN_PROMO}",
         parse_mode=ParseMode.HTML,
     )
 
-@dp.message(F.text.regexp(URL_REGEX))
-async def handle_video_url(message: Message, state: FSMContext):
-    await state.clear()
-    url = message.text.strip()
+async def _init_task_session(message: Message, source: str | Path):
     task_id = str(uuid.uuid4())[:8]
-
-    user_sessions[task_id] = {
-        "url": url,
-        "mode": "short",
-        "add_music": True,
-        "watermark_text": None,
-        "gen_description": True,
-        "banner_mode": "none",
-        "banner_source_path": None,
-        "chat_id": message.chat.id,
+    settings = await SettingsRepository.get_settings(message.from_user.id)
+    active_tasks[task_id] = {
+        "source": source,
+        "user_id": message.from_user.id,
         "menu_msg_id": None,
     }
 
-    kb = get_settings_keyboard(task_id, user_sessions[task_id])
+    kb = get_settings_keyboard(task_id, settings)
     menu_msg = await message.reply(
-        "⚙️ <b>Настройки генерации клипов:</b>\n"
-        "Нажмите на нужные кнопки для изменения параметров:",
+        "⚙️ <b>Параметры генерации клипов:</b>\n"
+        "<i>Настройки сохраняются автоматически. Нажмите на кнопки для изменения:</i>",
         reply_markup=kb,
         parse_mode=ParseMode.HTML,
     )
-    user_sessions[task_id]["menu_msg_id"] = menu_msg.message_id
+    active_tasks[task_id]["menu_msg_id"] = menu_msg.message_id
+
+@dp.message(F.text.regexp(URL_REGEX))
+async def handle_video_url(message: Message, state: FSMContext):
+    await state.clear()
+    await _init_task_session(message, message.text.strip())
+
+@dp.message(F.text.startswith("magnet:?"))
+async def handle_magnet_link(message: Message, state: FSMContext):
+    await state.clear()
+    await _init_task_session(message, message.text.strip())
+
+@dp.message(F.document)
+async def handle_torrent_document(message: Message, state: FSMContext):
+    await state.clear()
+    doc = message.document
+    if doc.file_name and doc.file_name.lower().endswith(".torrent"):
+        task_id = str(uuid.uuid4())[:8]
+        work_dir = config.TEMP_DIR / task_id
+        work_dir.mkdir(parents=True, exist_ok=True)
+        torrent_path = work_dir / doc.file_name
+        await bot.download(doc, destination=torrent_path)
+        await _init_task_session(message, torrent_path)
 
 @dp.callback_query(F.data.startswith("toggle_mode:"))
 async def cb_toggle_mode(callback: CallbackQuery):
     task_id = callback.data.split(":")[1]
-    if task_id in user_sessions:
-        s = user_sessions[task_id]
-        s["mode"] = "long" if s["mode"] == "short" else "short"
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.get_settings(user_id)
+        new_mode = "long" if s.mode == "short" else "short"
+        s = await SettingsRepository.update_settings(user_id, mode=new_mode)
+        await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("cycle_aspect:"))
+async def cb_cycle_aspect(callback: CallbackQuery):
+    task_id = callback.data.split(":")[1]
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.get_settings(user_id)
+        aspects = ["9:16", "16:9", "4:3"]
+        next_aspect = aspects[(aspects.index(s.aspect_ratio) + 1) % len(aspects)]
+        s = await SettingsRepository.update_settings(user_id, aspect_ratio=next_aspect)
+        await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("toggle_face:"))
+async def cb_toggle_face(callback: CallbackQuery):
+    task_id = callback.data.split(":")[1]
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.get_settings(user_id)
+        s = await SettingsRepository.update_settings(user_id, face_tracking=not s.face_tracking)
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("toggle_music:"))
 async def cb_toggle_music(callback: CallbackQuery):
     task_id = callback.data.split(":")[1]
-    if task_id in user_sessions:
-        s = user_sessions[task_id]
-        s["add_music"] = not s["add_music"]
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.get_settings(user_id)
+        s = await SettingsRepository.update_settings(user_id, add_music=not s.add_music)
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("toggle_desc:"))
 async def cb_toggle_desc(callback: CallbackQuery):
     task_id = callback.data.split(":")[1]
-    if task_id in user_sessions:
-        s = user_sessions[task_id]
-        s["gen_description"] = not s["gen_description"]
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.get_settings(user_id)
+        s = await SettingsRepository.update_settings(user_id, gen_description=not s.gen_description)
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("set_wm:"))
 async def cb_set_wm(callback: CallbackQuery, state: FSMContext):
     task_id = callback.data.split(":")[1]
-    if task_id not in user_sessions:
+    if task_id not in active_tasks:
         await callback.answer()
         return
 
-    s = user_sessions[task_id]
-    if s["watermark_text"]:
-        s["watermark_text"] = None
+    user_id = active_tasks[task_id]["user_id"]
+    s = await SettingsRepository.get_settings(user_id)
+
+    if s.watermark_text:
+        s = await SettingsRepository.update_settings(user_id, watermark_text=None)
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
         await callback.answer("Водяной знак выключен")
     else:
         await state.update_data(current_task_id=task_id, menu_msg_id=callback.message.message_id)
         await state.set_state(Form.waiting_watermark)
-        prompt_msg = await callback.message.answer("✏️ <b>Отправьте текст водяного знака</b> (например: <code>@my_channel</code>):", parse_mode=ParseMode.HTML)
+        prompt_msg = await callback.message.answer(
+            "✏️ <b>Отправьте текст водяного знака</b> (например: <code>@my_channel</code>):",
+            parse_mode=ParseMode.HTML,
+        )
         await state.update_data(prompt_msg_id=prompt_msg.message_id)
         await callback.answer()
 
@@ -177,9 +231,10 @@ async def process_watermark_text(message: Message, state: FSMContext):
     except Exception:
         pass
 
-    if task_id in user_sessions:
-        user_sessions[task_id]["watermark_text"] = message.text.strip()
-        kb = get_settings_keyboard(task_id, user_sessions[task_id])
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
+        s = await SettingsRepository.update_settings(user_id, watermark_text=message.text.strip())
+        kb = get_settings_keyboard(task_id, s)
         await bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=menu_msg_id, reply_markup=kb)
 
     await state.clear()
@@ -187,20 +242,23 @@ async def process_watermark_text(message: Message, state: FSMContext):
 @dp.callback_query(F.data.startswith("cycle_banner:"))
 async def cb_cycle_banner(callback: CallbackQuery, state: FSMContext):
     task_id = callback.data.split(":")[1]
-    if task_id not in user_sessions:
+    if task_id not in active_tasks:
         await callback.answer()
         return
 
-    s = user_sessions[task_id]
+    user_id = active_tasks[task_id]["user_id"]
+    s = await SettingsRepository.get_settings(user_id)
     modes = ["none", "start", "middle", "end", "every_30"]
-    curr_idx = modes.index(s["banner_mode"])
-    next_mode = modes[(curr_idx + 1) % len(modes)]
-    s["banner_mode"] = next_mode
+    next_mode = modes[(modes.index(s.banner_mode) + 1) % len(modes)]
+    s = await SettingsRepository.update_settings(user_id, banner_mode=next_mode)
 
-    if next_mode != "none" and not s.get("banner_source_path"):
+    if next_mode != "none" and not s.banner_source_path:
         await state.update_data(current_task_id=task_id, menu_msg_id=callback.message.message_id)
         await state.set_state(Form.waiting_banner)
-        prompt_msg = await callback.message.answer("📺 <b>Отправьте рекламное видео или фото</b> для интеграции:", parse_mode=ParseMode.HTML)
+        prompt_msg = await callback.message.answer(
+            "📺 <b>Отправьте рекламное видео или фото</b> для интеграции:",
+            parse_mode=ParseMode.HTML,
+        )
         await state.update_data(prompt_msg_id=prompt_msg.message_id)
     else:
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(task_id, s))
@@ -224,7 +282,8 @@ async def process_banner_media(message: Message, state: FSMContext):
     except Exception:
         pass
 
-    if task_id in user_sessions:
+    if task_id in active_tasks:
+        user_id = active_tasks[task_id]["user_id"]
         work_dir = config.TEMP_DIR / task_id
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -239,56 +298,53 @@ async def process_banner_media(message: Message, state: FSMContext):
             target_path = work_dir / f"ad_source{ext}"
             await bot.download(message.document, destination=target_path)
 
-        user_sessions[task_id]["banner_source_path"] = str(target_path)
-        kb = get_settings_keyboard(task_id, user_sessions[task_id])
+        s = await SettingsRepository.update_settings(user_id, banner_source_path=str(target_path))
+        kb = get_settings_keyboard(task_id, s)
         await bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=menu_msg_id, reply_markup=kb)
 
     await state.clear()
 
-@dp.callback_query(F.data.startswith("start_render:"))
-async def cb_start_render(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    task_id = callback.data.split(":")[1]
-    s = user_sessions.pop(task_id, None)
+async def run_video_pipeline(task_id: str, task_info: dict, callback: CallbackQuery):
+    user_id = task_info["user_id"]
+    s = await SettingsRepository.get_settings(user_id)
 
-    if not s:
-        await callback.answer("Сессия устарела, отправьте ссылку заново.", show_alert=True)
-        return
+    settings_dict = {
+        "mode": s.mode,
+        "aspect_ratio": s.aspect_ratio,
+        "face_tracking": s.face_tracking,
+        "add_music": s.add_music,
+        "watermark_text": s.watermark_text,
+        "gen_description": s.gen_description,
+        "banner_mode": s.banner_mode,
+        "banner_source_path": s.banner_source_path,
+    }
 
-    await callback.answer()
     work_dir = config.TEMP_DIR / task_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
     status_msg = await callback.message.edit_text(
-        f"⏳ <b>[1/4] Скачивание видео...</b>\n"
-        f"⏱ <i>Примерное время: ~4-6 мин</i>\n\n"
-        f"{VPN_PROMO}",
+        f"⏳ <b>[1/4] Подготовка к загрузке...</b>\n\n{VPN_PROMO}",
         parse_mode=ParseMode.HTML,
         reply_markup=None,
     )
+    progress = ProgressTracker(status_msg, VPN_PROMO)
 
     try:
-        video_path = await VideoDownloader.download(s["url"], work_dir)
-
-        await status_msg.edit_text(
-            f"🎙 <b>[2/4] Распознавание речи и таймкодов...</b>\n"
-            f"⏱ <i>Примерное время: ~2-3 мин</i>\n\n"
-            f"{VPN_PROMO}",
-            parse_mode=ParseMode.HTML,
+        video_path = await VideoDownloader.download(
+            source=task_info["source"],
+            output_dir=work_dir,
+            progress_tracker=progress,
         )
+
+        await progress.update(stage_title="🎙 [2/4] Распознавание речи Whisper...", force=True)
         transcript = await transcriber.transcribe(video_path)
 
         all_words = []
         for segment in transcript:
             all_words.extend(segment.get("words", []))
 
-        await status_msg.edit_text(
-            f"🧠 <b>[3/4] ИИ анализирует сюжет и создает описание...</b>\n"
-            f"⏱ <i>Примерное время: ~1 мин</i>\n\n"
-            f"{VPN_PROMO}",
-            parse_mode=ParseMode.HTML,
-        )
-        meta = await analyzer.extract_highlights_and_meta(transcript, mode=s["mode"])
+        await progress.update(stage_title="🧠 [3/4] ИИ анализирует сюжет...", force=True)
+        meta = await analyzer.extract_highlights_and_meta(transcript, mode=s.mode)
         highlights = meta.get("highlights", [])
 
         if not highlights:
@@ -300,12 +356,9 @@ async def cb_start_render(callback: CallbackQuery, state: FSMContext):
 
         total_clips = len(highlights)
         for idx, clip in enumerate(highlights):
-            remaining_mins = max(1, total_clips - idx)
-            await status_msg.edit_text(
-                f"✂️ <b>[4/4] Монтаж клипа {idx + 1} из {total_clips} (Караоке + Интеграции)...</b>\n"
-                f"⏱ <i>Осталось: ~{remaining_mins} мин</i>\n\n"
-                f"{VPN_PROMO}",
-                parse_mode=ParseMode.HTML,
+            await progress.update(
+                stage_title=f"✂️ [4/4] Монтаж клипа {idx + 1} из {total_clips}...",
+                force=True,
             )
 
             output_clip_path = await processor.render_highlight(
@@ -314,11 +367,13 @@ async def cb_start_render(callback: CallbackQuery, state: FSMContext):
                 all_words=all_words,
                 output_dir=work_dir,
                 index=idx,
-                settings=s,
+                settings=settings_dict,
+                progress_tracker=progress,
+                total_clips=total_clips,
             )
 
             desc_block = ""
-            if s["gen_description"] and meta.get("tiktok_caption"):
+            if s.gen_description and meta.get("tiktok_caption"):
                 desc_block = f"\n\n📋 <b>TikTok Описание:</b>\n<code>{meta['tiktok_caption']}</code>"
 
             caption = (
@@ -337,8 +392,11 @@ async def cb_start_render(callback: CallbackQuery, state: FSMContext):
 
         await status_msg.delete()
 
+    except asyncio.CancelledError:
+        logger.info(f"[{task_id}] Задача отменена из-за остановки сервера.")
+        raise
     except Exception as e:
-        logger.error(f"[{task_id}] Ошибка: {str(e)}", exc_info=True)
+        logger.error(f"[{task_id}] Ошибка обработки: {str(e)}", exc_info=True)
         await callback.message.answer(
             f"❌ <b>Произошла ошибка:</b> {str(e)}\n\n{VPN_PROMO}",
             parse_mode=ParseMode.HTML,
@@ -346,10 +404,55 @@ async def cb_start_render(callback: CallbackQuery, state: FSMContext):
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
-async def main():
+@dp.callback_query(F.data.startswith("start_render:"))
+async def cb_start_render(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    task_id = callback.data.split(":")[1]
+    task_info = active_tasks.pop(task_id, None)
+
+    if not task_info:
+        await callback.answer("Сессия устарела, отправьте ссылку заново.", show_alert=True)
+        return
+
+    await callback.answer()
+    job = asyncio.create_task(run_video_pipeline(task_id, task_info, callback))
+    processing_jobs.add(job)
+    job.add_done_callback(processing_jobs.discard)
+
+async def on_startup(bot: Bot):
+    await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Бот запущен.")
-    await dp.start_polling(bot)
+    logger.info("Бот запущен и готов к работе.")
+
+async def on_shutdown(bot: Bot):
+    logger.warning("Инициирован Graceful Shutdown...")
+
+    if processing_jobs:
+        logger.info(f"Отмена {len(processing_jobs)} активных фоновых задач...")
+        for job in processing_jobs:
+            job.cancel()
+        await asyncio.gather(*processing_jobs, return_exceptions=True)
+
+    await bot.session.close()
+    await engine.dispose()
+
+    shutil.rmtree(config.TEMP_DIR, ignore_errors=True)
+    config.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info("Все ресурсы освобождены. Сервер остановлен корректно.")
+
+async def main():
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    loop = asyncio.get_running_loop()
+    if sys.platform != "win32":
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
+
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
