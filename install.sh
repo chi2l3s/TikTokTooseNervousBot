@@ -15,6 +15,9 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+TTY_SRC="/dev/stdin"
+[ -t 0 ] || TTY_SRC="/dev/tty"
+
 print_header() {
     clear
     echo ""
@@ -52,10 +55,16 @@ ask_input() {
         fi
 
         if [ "$is_secret" = "true" ]; then
-            read -s -r input_val < /dev/tty
+            if ! read -s -r input_val < "$TTY_SRC"; then
+                echo -e "\n    ${RED}[!] Не удалось прочитать ввод (источник: ${TTY_SRC})${NC}" >&2
+                exit 1
+            fi
             echo "" >&2
         else
-            read -r input_val < /dev/tty
+            if ! read -r input_val < "$TTY_SRC"; then
+                echo -e "\n    ${RED}[!] Не удалось прочитать ввод (источник: ${TTY_SRC})${NC}" >&2
+                exit 1
+            fi
         fi
 
         input_val=$(echo "$input_val" | xargs)
