@@ -13,17 +13,29 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 GRAY='\033[0;90m'
 WHITE='\033[1;37m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 print_header() {
     clear
     echo ""
-    echo -e "  ${CYAN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "  ${CYAN}║           🎬 AI MOVIE SHORTS BOT INSTALLER (UNIVERSAL LINUX)      ║${NC}"
-    echo -e "  ${CYAN}║         Автоматическая установка и интерактивная настройка        ║${NC}"
-    echo -e "  ${CYAN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  ${CYAN}╔═════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "  ${CYAN}║             🎬 AI MOVIE SHORTS BOT — ИНСТАЛЛЯТОР ДЛЯ LINUX              ║${NC}"
+    echo -e "  ${CYAN}║     (Поддержка CachyOS, Arch, Ubuntu, Debian, Fedora, openSUSE)         ║${NC}"
+    echo -e "  ${CYAN}╚═════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  ${GRAY}[i] Рабочая директория: $(pwd)${NC}"
+    echo -e "  ${GRAY}📁 Рабочая папка: ${WHITE}$(pwd)${NC}"
+    echo ""
+}
+
+print_step() {
+    local step_num="$1"
+    local step_title="$2"
+    echo ""
+    echo -e "  ${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${MAGENTA}${BOLD}[ШАГ ${step_num}]${NC} ${WHITE}${BOLD}${step_title}${NC}"
+    echo -e "  ${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
     echo ""
 }
 
@@ -36,7 +48,7 @@ ask_input() {
 
     while true; do
         if [ -n "$default_val" ]; then
-            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC} ${GRAY}[%s]${NC}: " "$question" "$default_val"
+            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC} ${GRAY}[По умолчанию: %s]${NC}: " "$question" "$default_val"
         else
             printf "  ${YELLOW}?${NC} ${WHITE}%s${NC}: " "$question"
         fi
@@ -55,7 +67,7 @@ ask_input() {
                 echo "$default_val"
                 return 0
             elif [ "$required" = "true" ]; then
-                echo -e "    ${RED}[!] Это обязательное поле, попробуйте снова.${NC}" >&2
+                echo -e "    ${RED}[!] Это поле обязательно для заполнения. Попробуйте снова.${NC}" >&2
                 continue
             else
                 echo ""
@@ -74,17 +86,19 @@ SUDO=""
 if [ "$EUID" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
+        echo -e "  ${YELLOW}[i] Для установки системных утилит могут потребоваться права администратора.${NC}"
+        echo -e "  ${YELLOW}[i] Введите пароль пользователя при появлении запроса [sudo].${NC}"
+        echo ""
     else
         echo -e "  ${RED}[✗] Скрипт требует прав администратора (root или sudo).${NC}"
         exit 1
     fi
 fi
 
-# 1. Определение дистрибутива и установка пакетов
-echo -e "  ${GRAY}[*] Определение дистрибутива Linux и установка системных зависимостей...${NC}"
+print_step "1/4" "Установка системных зависимостей (Python, FFmpeg, aria2)"
 
 if command -v pacman >/dev/null 2>&1; then
-    echo -e "  ${CYAN}[i] Обнаружен CachyOS / Arch Linux (pacman)${NC}"
+    echo -e "  ${CYAN}[i] Обнаружен менеджер пакетов pacman (CachyOS / Arch Linux)${NC}"
     $SUDO pacman -Sy --needed --noconfirm \
         python \
         python-pip \
@@ -95,12 +109,12 @@ if command -v pacman >/dev/null 2>&1; then
         unzip \
         base-devel \
         libglvnd \
-        glib2 >/dev/null 2>&1
+        glib2
 
 elif command -v apt-get >/dev/null 2>&1; then
-    echo -e "  ${CYAN}[i] Обнаружен Debian / Ubuntu (apt)${NC}"
-    $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq \
+    echo -e "  ${CYAN}[i] Обнаружен менеджер пакетов apt (Ubuntu / Debian)${NC}"
+    $SUDO apt-get update
+    $SUDO apt-get install -y \
         python3 \
         python3-venv \
         python3-pip \
@@ -111,10 +125,10 @@ elif command -v apt-get >/dev/null 2>&1; then
         unzip \
         libgl1 \
         libglib2.0-0 \
-        build-essential >/dev/null 2>&1
+        build-essential
 
 elif command -v dnf >/dev/null 2>&1; then
-    echo -e "  ${CYAN}[i] Обнаружен Fedora / RHEL (dnf)${NC}"
+    echo -e "  ${CYAN}[i] Обнаружен менеджер пакетов dnf (Fedora / RHEL)${NC}"
     $SUDO dnf install -y \
         python3 \
         python3-pip \
@@ -125,10 +139,10 @@ elif command -v dnf >/dev/null 2>&1; then
         unzip \
         mesa-libGL \
         glib2 \
-        gcc gcc-c++ >/dev/null 2>&1
+        gcc gcc-c++
 
 elif command -v zypper >/dev/null 2>&1; then
-    echo -e "  ${CYAN}[i] Обнаружен openSUSE (zypper)${NC}"
+    echo -e "  ${CYAN}[i] Обнаружен менеджер пакетов zypper (openSUSE)${NC}"
     $SUDO zypper install -y \
         python3 \
         python3-pip \
@@ -138,54 +152,54 @@ elif command -v zypper >/dev/null 2>&1; then
         curl \
         unzip \
         libGL1 \
-        glib2 >/dev/null 2>&1
+        glib2
 else
-    echo -e "  ${YELLOW}[!] Пакетный менеджер не определен. Убедитесь, что python3, ffmpeg и aria2 установлены.${NC}"
+    echo -e "  ${YELLOW}[!] Пакетный менеджер не определен. Убедитесь, что python, ffmpeg и aria2 установлены.${NC}"
 fi
 
-echo -e "  ${GREEN}[✓] Системные зависимости готовы!${NC}"
+echo ""
+echo -e "  ${GREEN}[✓] Все системные пакеты успешно установлены!${NC}"
 
-# 2. Клонирование репозитория
+print_step "2/4" "Проверка файлов проекта"
+
 if [ ! -f "bot.py" ]; then
-    echo -e "  ${YELLOW}[*] Файлы проекта не обнаружены в текущей папке.${NC}"
-    echo -e "  ${GRAY}[*] Загрузка проекта из GitHub ($REPO_OWNER/$REPO_NAME)...${NC}"
+    echo -e "  ${YELLOW}[*] Файлы проекта не найдены в текущей папке.${NC}"
+    echo -e "  ${GRAY}[*] Клонирование из репозитория GitHub (${REPO_OWNER}/${REPO_NAME})...${NC}"
 
     cloned=false
     if command -v git >/dev/null 2>&1; then
-        if git clone "https://github.com/$REPO_OWNER/$REPO_NAME.git" . --quiet 2>/dev/null; then
+        if git clone "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" . --quiet 2>/dev/null; then
             cloned=true
         fi
     fi
 
     if [ "$cloned" = false ] || [ ! -f "bot.py" ]; then
-        echo -e "  ${GRAY}[*] Скачивание архива репозитория...${NC}"
-        zip_url="https://github.com/$REPO_OWNER/$REPO_NAME/archive/refs/heads/$REPO_BRANCH.zip"
+        echo -e "  ${GRAY}[*] Загрузка ZIP-архива репозитория...${NC}"
+        zip_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_BRANCH}.zip"
         curl -sSL "$zip_url" -o repo.zip
         unzip -q repo.zip
-        mv "$REPO_NAME-$REPO_BRANCH"/* .
-        mv "$REPO_NAME-$REPO_BRANCH"/.* . 2>/dev/null || true
-        rm -rf repo.zip "$REPO_NAME-$REPO_BRANCH"
+        mv "${REPO_NAME}-${REPO_BRANCH}"/* .
+        mv "${REPO_NAME}-${REPO_BRANCH}"/.* . 2>/dev/null || true
+        rm -rf repo.zip "${REPO_NAME}-${REPO_BRANCH}"
     fi
-    echo -e "  ${GREEN}[✓] Проект успешно загружен!${NC}"
+    echo -e "  ${GREEN}[✓] Файлы бота успешно загружены!${NC}"
+else
+    echo -e "  ${GREEN}[✓] Файлы проекта уже находятся в текущей папке.${NC}"
 fi
 
-echo ""
-echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
-echo -e "  ${CYAN}                 ШАГ 1: НАСТРОЙКА ПАРАМЕТРОВ БОТА                  ${NC}"
-echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
-echo ""
+print_step "3/4" "Настройка конфигурации (.env)"
 
-bot_token=$(ask_input "Введите Telegram Bot Token (от @BotFather)" "" "true" "false")
-openai_key=$(ask_input "Введите OpenAI / OpenRouter API ключ" "" "true" "true")
+bot_token=$(ask_input "Telegram Bot Token (полученный у @BotFather)" "" "true" "false")
+openai_key=$(ask_input "OpenAI / OpenRouter API ключ" "" "true" "true")
 base_url=$(ask_input "OpenAI Base URL" "https://api.openai.com/v1" "false" "false")
-model_name=$(ask_input "Модель LLM" "gpt-4o" "false" "false")
+model_name=$(ask_input "Модель LLM (например: gpt-4o, deepseek-chat)" "gpt-4o" "false" "false")
 
 echo ""
-echo -e "  ${GRAY}Выберите модель Whisper для распознавания речи:${NC}"
-echo -e "    ${WHITE}1) large-v3-turbo (Максимальная точность, рекомендуется)${NC}"
-echo -e "    ${WHITE}2) medium         (Хороший баланс)${NC}"
-echo -e "    ${WHITE}3) small          (Быстрая, для слабых ПК)${NC}"
-whisper_choice=$(ask_input "Выберите вариант [1-3]" "1" "false" "false")
+echo -e "  ${WHITE}Выберите модель Whisper для распознавания речи:${NC}"
+echo -e "    ${CYAN}1)${NC} ${WHITE}large-v3-turbo${NC} ${GRAY}(Рекомендуется: максимальная точность и быстрая работа)${NC}"
+echo -e "    ${CYAN}2)${NC} ${WHITE}medium${NC}         ${GRAY}(Средний баланс)${NC}"
+echo -e "    ${CYAN}3)${NC} ${WHITE}small${NC}          ${GRAY}(Для слабых ПК / медленных процессоров)${NC}"
+whisper_choice=$(ask_input "Ваш выбор [1-3]" "1" "false" "false")
 
 case "$whisper_choice" in
     2) whisper_model="medium" ;;
@@ -194,10 +208,10 @@ case "$whisper_choice" in
 esac
 
 echo ""
-echo -e "  ${GRAY}Устройство для Whisper:${NC}"
-echo -e "    ${WHITE}1) CPU (Процессор, по умолчанию)${NC}"
-echo -e "    ${WHITE}2) CUDA (Видеокарта NVIDIA)${NC}"
-device_choice=$(ask_input "Выберите устройство [1-2]" "1" "false" "false")
+echo -e "  ${WHITE}Выберите устройство для обработки Whisper:${NC}"
+echo -e "    ${CYAN}1)${NC} ${WHITE}CPU${NC}  ${GRAY}(Процессор, работает абсолютно везде)${NC}"
+echo -e "    ${CYAN}2)${NC} ${WHITE}CUDA${NC} ${GRAY}(Видеокарта NVIDIA с установленными драйверами)${NC}"
+device_choice=$(ask_input "Ваш выбор [1-2]" "1" "false" "false")
 
 if [ "$device_choice" = "2" ]; then
     whisper_device="cuda"
@@ -207,14 +221,8 @@ else
     whisper_compute="int8"
 fi
 
-http_proxy=$(ask_input "HTTP Прокси (если нужен, например: http://127.0.0.1:10809, иначе пусто)" "" "false" "false")
-max_clips=$(ask_input "Максимум клипов за раз" "5" "false" "false")
-
-echo ""
-echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
-echo -e "  ${CYAN}               ШАГ 2: СОЗДАНИЕ ОКРУЖЕНИЯ И БАЗЫ ДАННЫХ             ${NC}"
-echo -e "  ${GRAY}───────────────────────────────────────────────────────────────────${NC}"
-echo ""
+http_proxy=$(ask_input "HTTP Прокси (если требуется, например: http://127.0.0.1:10809, иначе Enter)" "" "false" "false")
+max_clips=$(ask_input "Максимальное количество клипов за одну генерацию" "5" "false" "false")
 
 mkdir -p music temp fonts
 
@@ -230,19 +238,20 @@ HTTP_PROXY=$http_proxy
 MAX_CLIPS=$max_clips
 EOF
 
-echo -e "  ${GREEN}[✓] Конфигурация .env успешно создана!${NC}"
+echo ""
+echo -e "  ${GREEN}[✓] Файл .env успешно сгенерирован и сохранен!${NC}"
 
-# Виртуальное окружение
+print_step "4/4" "Создание окружения Python и установка библиотек"
+
 if [ ! -d ".venv" ]; then
     echo -e "  ${GRAY}[*] Создание виртуального окружения (.venv)...${NC}"
     python3 -m venv .venv
 fi
 
-echo -e "  ${GRAY}[*] Установка зависимостей из requirements.txt...${NC}"
-./.venv/bin/pip install --upgrade pip --quiet
-./.venv/bin/pip install -r requirements.txt --quiet
+echo -e "  ${GRAY}[*] Обновление pip и установка requirements.txt...${NC}"
+./.venv/bin/pip install --upgrade pip
+./.venv/bin/pip install -r requirements.txt
 
-# Создание скрипта запуска start.sh
 cat <<'EOF' > start.sh
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
@@ -252,15 +261,15 @@ EOF
 chmod +x start.sh
 
 echo ""
-echo -e "  ${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "  ${GREEN}║                   УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                    ║${NC}"
-echo -e "  ${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+echo -e "  ${GREEN}╔═════════════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "  ${GREEN}║                     УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                        ║${NC}"
+echo -e "  ${GREEN}╚═════════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${WHITE}Для запуска бота используйте:${NC}"
+echo -e "  ${WHITE}Для последующего запуска используйте команду:${NC}"
 echo -e "    ${YELLOW}./start.sh${NC}"
 echo ""
 
-start_now=$(ask_input "Запустить бота прямо сейчас в консоли? (y/n)" "y" "false" "false")
+start_now=$(ask_input "Запустить бота прямо сейчас? (y/n)" "y" "false" "false")
 if [ "$(echo "$start_now" | tr '[:upper:]' '[:lower:]')" = "y" ]; then
     ./.venv/bin/python3 bot.py
 fi
