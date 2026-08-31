@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-[ -t 0 ] || exec < /dev/tty 2>/dev/null || true
-
 REPO_OWNER="chi2l3s"
 REPO_NAME="TikTokTooseNervousBot"
 REPO_BRANCH="main"
@@ -48,16 +46,16 @@ ask_input() {
 
     while true; do
         if [ -n "$default_val" ]; then
-            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC} ${GRAY}[По умолчанию: %s]${NC}: " "$question" "$default_val"
+            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC} ${GRAY}[По умолчанию: %s]${NC}: " "$question" "$default_val" >&2
         else
-            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC}: " "$question"
+            printf "  ${YELLOW}?${NC} ${WHITE}%s${NC}: " "$question" >&2
         fi
 
         if [ "$is_secret" = "true" ]; then
-            read -s -r input_val
-            echo ""
+            read -s -r input_val < /dev/tty
+            echo "" >&2
         else
-            read -r input_val
+            read -r input_val < /dev/tty
         fi
 
         input_val=$(echo "$input_val" | xargs)
@@ -194,11 +192,11 @@ openai_key=$(ask_input "OpenAI / OpenRouter API ключ" "" "true" "true")
 base_url=$(ask_input "OpenAI Base URL" "https://api.openai.com/v1" "false" "false")
 model_name=$(ask_input "Модель LLM (например: gpt-4o, deepseek-chat)" "gpt-4o" "false" "false")
 
-echo ""
-echo -e "  ${WHITE}Выберите модель Whisper для распознавания речи:${NC}"
-echo -e "    ${CYAN}1)${NC} ${WHITE}large-v3-turbo${NC} ${GRAY}(Рекомендуется: максимальная точность и быстрая работа)${NC}"
-echo -e "    ${CYAN}2)${NC} ${WHITE}medium${NC}         ${GRAY}(Средний баланс)${NC}"
-echo -e "    ${CYAN}3)${NC} ${WHITE}small${NC}          ${GRAY}(Для слабых ПК / медленных процессоров)${NC}"
+echo "" >&2
+echo -e "  ${WHITE}Выберите модель Whisper для распознавания речи:${NC}" >&2
+echo -e "    ${CYAN}1)${NC} ${WHITE}large-v3-turbo${NC} ${GRAY}(Рекомендуется: максимальная точность и быстрая работа)${NC}" >&2
+echo -e "    ${CYAN}2)${NC} ${WHITE}medium${NC}         ${GRAY}(Средний баланс)${NC}" >&2
+echo -e "    ${CYAN}3)${NC} ${WHITE}small${NC}          ${GRAY}(Для слабых ПК / медленных процессоров)${NC}" >&2
 whisper_choice=$(ask_input "Ваш выбор [1-3]" "1" "false" "false")
 
 case "$whisper_choice" in
@@ -207,10 +205,10 @@ case "$whisper_choice" in
     *) whisper_model="large-v3-turbo" ;;
 esac
 
-echo ""
-echo -e "  ${WHITE}Выберите устройство для обработки Whisper:${NC}"
-echo -e "    ${CYAN}1)${NC} ${WHITE}CPU${NC}  ${GRAY}(Процессор, работает абсолютно везде)${NC}"
-echo -e "    ${CYAN}2)${NC} ${WHITE}CUDA${NC} ${GRAY}(Видеокарта NVIDIA с установленными драйверами)${NC}"
+echo "" >&2
+echo -e "  ${WHITE}Выберите устройство для обработки Whisper:${NC}" >&2
+echo -e "    ${CYAN}1)${NC} ${WHITE}CPU${NC}  ${GRAY}(Процессор, работает абсолютно везде)${NC}" >&2
+echo -e "    ${CYAN}2)${NC} ${WHITE}CUDA${NC} ${GRAY}(Видеокарта NVIDIA с установленными драйверами)${NC}" >&2
 device_choice=$(ask_input "Ваш выбор [1-2]" "1" "false" "false")
 
 if [ "$device_choice" = "2" ]; then
